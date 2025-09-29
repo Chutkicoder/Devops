@@ -1,0 +1,127 @@
+# 1. Project Setup
+# pip install ansible docker
+# Verify installations: ansible --version, docker --version, docker compose version
+
+# 2. Create project folder
+mkdir ansible-deploy-demo
+cd ansible-deploy-demo
+
+# 3. Create SSH key for Ansible
+ssh-keygen -t rsa -b 4096 -f ./ansible_demo_key -N ""
+
+# 4. Dockerfile.node
+# Save this as Dockerfile.node
+FROM ubuntu:22.04
+
+RUN apt-get update && \
+    apt-get install -y openssh-server python3 python3-pip python3-venv && \
+    mkdir /var/run/sshd
+
+RUN echo 'root:root' | chpasswd
+
+RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
+RUN sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
+
+EXPOSE 22
+CMD ["/usr/sbin/sshd","-D"]
+
+# 5. docker-compose.yml
+# Save this as docker-compose.yml
+version: "3"
+services:
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: node1
+    ports:
+      - "2222:22"
+
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: node2
+    ports:
+      - "2223:22"
+
+# 6. Start Docker containers
+docker compose up -d --build
+
+# 7. Add SSH key to containers
+docker exec -i node1 bash -lc 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < ./ansible_demo_key.pub
+docker exec -i node2 bash -lc 'mkdir -p /root/.ssh && cat >> /root/.ssh/authorized_keys' < ./ansible_demo_key.pub
+docker exec node1 chmod 700 /root/.ssh && docker exec node1 chmod 600 /root/.ssh/authorized_keys
+docker exec node2 chmod 700 /root/.ssh && docker exec node2 chmod 600 /root/.ssh/authorized_keys
+
+# 8. Test SSH
+ssh -i ./ansible_demo_key -p 2222 root@127.0.0.1 "python3 --version"
+ssh -i ./ansible_demo_key -p 2223 root@127.0.0.1 "python3 --version"
+
+# 9. Ansible Inventory (inventory.ini)
+[node_servers]
+node1 ansible_host=127.0.0.1 ansible_port=2222 ansible_user=root ansible_ssh_private_key_file=./ansible_demo_key ansible_python_interpreter=/usr/bin/python3
+node2 ansible_host=127.0.0.1 ansible_port=2223 ansible_user=root ansible_ssh_private_key_file=./ansible_demo_key ansible_python_interpreter=/usr/bin/python3
+
+# 10. Flask App (app.py)
+from flask import Flask
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+    return "Hello from Ansible-deployed Flask app!"
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+
+# requirements.txt
+flask
+
+# 11. Ansible Playbook (deploy-python-app.yml)
+- name: Deploy Python Flask app
+  hosts: node_servers
+  become: yes
+
+  tasks:
+    - name: Ensure /opt/myapp exists
+      file:
+        path: /opt/myapp
+        state: directory
+
+    - name: Copy application files
+      copy:
+        src: ./app.py
+        dest: /opt/myapp/app.py
+
+    - name: Copy requirements.txt
+      copy:
+        src: ./requirements.txt
+        dest: /opt/myapp/requirements.txt
+
+    - name: Create virtualenv
+      command: python3 -m venv /opt/myapp/venv
+      args:
+        creates: /opt/myapp/venv
+
+    - name: Install dependencies
+      command: /opt/myapp/venv/bin/pip install -r /opt/myapp/requirements.txt
+
+How to use this .txt file:
+
+Copy content above into a file named docker-ansible-setup.txt.
+
+Open VS Code and create the following files from it:
+
+Dockerfile.node
+
+docker-compose.yml
+
+inventory.ini
+
+app.py
+
+requirements.txt
+
+deploy-python-app.yml
+
+Follow the commands in the text to build Docker containers and deploy using Ansible
