@@ -1,8 +1,16 @@
-# Use a small base image
-FROM alpine:latest
+FROM python:3.9-slim
 
-# Copy the text file into the image
-COPY message.txt /message.txt
+WORKDIR /app
 
-# Default command to show file content
-CMD ["cat", "/message.txt"]
+# Install PostgreSQL client
+RUN apt-get update && \
+    apt-get install -y postgresql-client && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY app/ .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY wait-for-postgres.sh /wait-for-postgres.sh
+RUN chmod +x /wait-for-postgres.sh
+
+CMD ["/wait-for-postgres.sh", "db", "python", "app.py"]
